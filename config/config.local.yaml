@@ -1,0 +1,23 @@
+jwt:
+  seckey: changeme
+  expiration: 5h
+
+server:
+  host: 0.0.0.0
+  port: 8080
+  ReadTimeout: 15s
+  WriteTimeout: 15s
+  IdleTimeout: 60s
+  ShutDownTimeOut: 30s
+
+logger:
+  logger:
+    Level: "debug"
+    Development: true
+    Encoding: "json"
+    OutputPaths: ["stdout"]
+    ErrorOutputPaths: ["stderr"]
+    EncoderConfig:
+      MessageKey: "message"
+      LevelKey: "level"
+      TimeKey: "timestamp"

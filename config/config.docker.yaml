@@ -1,0 +1,34 @@
+opensearch:
+  connect:
+    retries: 5
+    delay: 5s
+  client:
+    addresses:
+      - "http://opensearch:9200"
+
+migrate:
+  FailOnError: true
+  OpenSearch:
+    Path: "internal/infra/opensearch/documents/001_vacancy_v1"
+    StateFilePath: "internal/infra/opensearch/documents/.migrations.json"
+    FailOnError: true
+
+server:
+  host: 0.0.0.0
+  port: 11434
+  ReadTimeout: 15s
+  WriteTimeout: 15s
+  IdleTimeout: 60s
+  ShutDownTimeOut: 30s
+
+logger:
+  logger:
+    Level: "debug"
+    Development: true
+    Encoding: "json"
+    OutputPaths: ["stdout"]
+    ErrorOutputPaths: ["stderr"]
+    EncoderConfig:
+      MessageKey: "message"
+      LevelKey: "level"
+      TimeKey: "timestamp"

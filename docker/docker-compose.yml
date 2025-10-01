@@ -1,0 +1,64 @@
+version: "3.8"
+
+services:
+  opensearch:
+    image: opensearchproject/opensearch:2.14.0
+    container_name: opensearch
+    environment:
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+      - "DISABLE_SECURITY_PLUGIN=true"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+    ports:
+      - "9200:9200"
+      - "9600:9600" # метрики
+    networks:
+      - opensearch-net
+
+  opensearch-dashboards:
+    image: opensearchproject/opensearch-dashboards:2.14.0
+    container_name: opensearch-dashboards
+    ports:
+      - "5601:5601"
+    environment:
+      - OPENSEARCH_HOSTS=http://opensearch:9200
+      - DISABLE_SECURITY_DASHBOARDS_PLUGIN=true
+    networks:
+      - opensearch-net
+    depends_on:
+      - opensearch
+    healthcheck:
+      test: ["executable", "arg"]
+      interval: 1m30s
+      timeout: 15s
+      retries: 5
+      start_period: 30s
+  dbmanager:
+    image: daniilselin/tsu-skills-dbmanager:latest
+    container_name: dbmanager
+    environment:
+      - APP_SERVER_PORT=${APP_SERVER_PORT}
+      - CONFIG_FILE_PATH=${CONTAINER_CONFIG_FILE_PATH}
+      - APP_MIGRATE_OPENSEARCH_PATH=${CONTAINER_MIGRATIONS_PATH}
+      - APP_MIGRATE_OPENSEARCH_STATEFILEPATH=${CONTAINER_STATEFILE_PATH}
+    ports:
+      - "${APP_SERVER_PORT}:${APP_SERVER_PORT}"
+    volumes:
+      - "${HOST_CONFIG_FILE_PATH}:${CONTAINER_CONFIG_FILE_PATH}:ro"
+      - "${HOST_MIGRATIONS_PATH}:${CONTAINER_MIGRATIONS_PATH}:ro"
+      - "${HOST_STATEFILE_PATH}:${CONTAINER_STATEFILE_PATH}:ro"
+    depends_on:
+      - opensearch
+    networks:
+      - opensearch-net
+volumes:
+  opensearch-data:
+
+networks:
+  opensearch-net:
