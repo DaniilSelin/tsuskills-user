@@ -202,7 +202,7 @@ func (h *Handler) HandleRegister(w http.ResponseWriter, r *http.Request) {
 	h.log.Info(
 		ctx,
 		op+": registered successfully",
-		zap.Int("userID", userID),
+		zap.Any("userID", userID),
 		zap.String("token", token),
 	)
 	h.writeJSON(ctx, w, http.StatusOK, map[string]interface{}{"user_id": userID, "token": token})

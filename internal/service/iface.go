@@ -14,8 +14,9 @@ type IUserRepository interface {
 		domain.TxExecutor,
 		domain.User,
 		domain.Email) (uuid.UUID, error)
-	CreateUser(context.Context, *domain.User) (int, error)
-	GetUser(context.Context, int) (*domain.User, error)
+	GetUser(
+		context.Context,
+		uuid.UUID) (*domain.User, *domain.Email, domain.ErrorCode)
 	UpdateUser(context.Context, *domain.User) error
 	DeleteUser(context.Context, int) error
 	GetUserByEmail(context.Context, string) (string, int, error)

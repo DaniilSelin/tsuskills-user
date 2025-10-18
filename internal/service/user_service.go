@@ -33,7 +33,7 @@ func NewUserService(repo IUserRepository, security ISecurity, log logger.Logger,
 // Register - получает уже валидированные данные с верхнего уровня.
 // Возвращает
 func (s *UserService) Register(ctx context.Context, registry domain.RegistrationRequest) (uuid.UUID, string, domain.ErrorCode) {
-	s.log.Error(
+	s.log.Info(
 		ctx,
 		"Register: invoke",
 	)
@@ -89,10 +89,23 @@ func (s *UserService) Register(ctx context.Context, registry domain.Registration
 	return userID, token, domain.CodeOK
 }
 
-// ДОДЕЛАТЬ
+// Доделать
 
-func (s *UserService) GetUser(ctx context.Context, id int) (*domain.User, error) {
-	return s.repo.GetUser(ctx, id)
+func (s *UserService) GetUser(ctx context.Context, id uuid.UUID) (*domain.User, *domain.Email, domain.ErrorCode) {
+	s.log.Info(
+		ctx,
+		"GetUser: invoke",
+	)
+
+	u, e, err := s.repo.GetUser(ctx, id)
+	if err != domain.CodeOK {
+		s.log.Error(
+			ctx,
+			"GetUser: invoke",
+		)
+	}
+
+	return u, e, err
 }
 
 func (s *UserService) UpdateUser(ctx context.Context, user *domain.User) error {
