@@ -1,38 +1,32 @@
 package security
 
 import (
-	"errors"
-	"tsuskills-user/config"
-	"tsuskills-user/internal/domain"
-
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"time"
 
+	"tsuskills-user/config"
+	"tsuskills-user/internal/domain"
+
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
 
-// Использованные ошибки -
-// ErrInvalidToken
-// ErrExpiredToken
-
 type Security struct {
-	cfg *config.Config
+	cfg *config.JWTConfig
 }
 
-func NewSecurity(cfg *config.Config) *Security {
-	return &Security{
-		cfg: cfg,
-	}
+func NewSecurity(cfg *config.JWTConfig) *Security {
+	return &Security{cfg: cfg}
 }
 
-func (s *Security) GetHashPswd(pswd string) (string, error) {
-	hash, err := bcrypt.GenerateFromPassword([]byte(pswd), 12)
+func (s *Security) HashPassword(password string) (string, error) {
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
 	if err != nil {
-		// Обрабатывать будем в service
-		return "", fmt.Errorf("error hashing password: %w", err)
+		return "", fmt.Errorf("%w: %v", domain.ErrHashPassword, err)
 	}
 	return string(hash), nil
 }
@@ -47,24 +41,29 @@ func generateRandomID() string {
 	return hex.EncodeToString(b)
 }
 
-func (s *Security) GenerateToken(userID int) (string, error) {
-	expirationTime := time.Now().Add(time.Duration(s.cfg.JWT.Expiration) * time.Minute)
+func (s *Security) GenerateAccessToken(userID uuid.UUID) (string, error) {
+	return s.generateToken(userID, s.cfg.AccessExpiration)
+}
 
+func (s *Security) GenerateRefreshToken(userID uuid.UUID) (string, error) {
+	return s.generateToken(userID, s.cfg.RefreshExpiration)
+}
+
+func (s *Security) generateToken(userID uuid.UUID, expiration time.Duration) (string, error) {
 	claims := &domain.Claims{
-		UserID:  userID,
+		UserID:  userID.String(),
 		TokenID: generateRandomID(),
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(expirationTime),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(expiration)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 		},
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString([]byte(s.cfg.JWT.SecKey))
+	tokenString, err := token.SignedString([]byte(s.cfg.SecretKey))
 	if err != nil {
-		return "", fmt.Errorf("error signing token: %w", err)
+		return "", fmt.Errorf("%w: %v", domain.ErrGenerateToken, err)
 	}
-
 	return tokenString, nil
 }
 
@@ -74,12 +73,12 @@ func (s *Security) ValidateToken(tokenString string) (*domain.Claims, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
-		return []byte(s.cfg.JWT.SecKey), nil
+		return []byte(s.cfg.SecretKey), nil
 	})
 
 	if err != nil {
 		if errors.Is(err, jwt.ErrTokenExpired) {
-			return nil, domain.ErrExpiredToken
+			return claims, domain.ErrExpiredToken
 		}
 		return nil, domain.ErrInvalidToken
 	}
@@ -91,28 +90,21 @@ func (s *Security) ValidateToken(tokenString string) (*domain.Claims, error) {
 	return claims, nil
 }
 
-func (s *Security) RefreshToken(tokenString string) (string, error) {
-	claims, err := s.ValidateToken(tokenString)
-	if err != nil && !errors.Is(err, domain.ErrExpiredToken) {
-		return "", err
-	}
-
-	expirationTime := time.Now().Add(time.Duration(s.cfg.JWT.Expiration) * time.Minute)
-
-	newClaims := &domain.Claims{
-		UserID:  claims.UserID,
-		TokenID: generateRandomID(),
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(expirationTime),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-		},
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, newClaims)
-	tokenString, err = token.SignedString([]byte(s.cfg.JWT.SecKey))
+func (s *Security) RefreshAccessToken(refreshTokenString string) (string, *domain.Claims, error) {
+	claims, err := s.ValidateToken(refreshTokenString)
 	if err != nil {
-		return "", fmt.Errorf("error signing refreshed token: %w", err)
+		return "", nil, err
 	}
 
-	return tokenString, nil
+	userID, err := uuid.Parse(claims.UserID)
+	if err != nil {
+		return "", nil, domain.ErrInvalidToken
+	}
+
+	newAccess, err := s.GenerateAccessToken(userID)
+	if err != nil {
+		return "", nil, err
+	}
+
+	return newAccess, claims, nil
 }

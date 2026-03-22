@@ -9,13 +9,6 @@ import (
 
 var validate = validator.New()
 
-// ValidationError представляет ошибку валидации
-type ValidationError struct {
-	Field   string `json:"field"`
-	Message string `json:"message"`
-}
-
-// ValidateStruct валидирует структуру и возвращает читаемую ошибку
 func ValidateStruct(s interface{}) error {
 	err := validate.Struct(s)
 	if err == nil {
@@ -23,43 +16,25 @@ func ValidateStruct(s interface{}) error {
 	}
 
 	var messages []string
-	for _, validationErr := range err.(validator.ValidationErrors) {
-		field := validationErr.Field()
-		tag := validationErr.Tag()
-		param := validationErr.Param()
-
-		message := getValidationMessage(field, tag, param)
-		messages = append(messages, message)
+	for _, ve := range err.(validator.ValidationErrors) {
+		messages = append(messages, formatMessage(ve.Field(), ve.Tag(), ve.Param()))
 	}
 
 	return fmt.Errorf("validation failed: %s", strings.Join(messages, "; "))
 }
 
-// getValidationMessage возвращает человекочитаемое сообщение об ошибке
-func getValidationMessage(field, tag, param string) string {
+func formatMessage(field, tag, param string) string {
 	switch tag {
 	case "required":
 		return fmt.Sprintf("%s is required", field)
-	case "uuid4":
-		return fmt.Sprintf("%s must be a valid UUID", field)
-	case "gt":
-		return fmt.Sprintf("%s must be greater than %s", field, param)
-	case "gte":
-		return fmt.Sprintf("%s must be greater than or equal to %s", field, param)
-	case "lt":
-		return fmt.Sprintf("%s must be less than %s", field, param)
-	case "lte":
-		return fmt.Sprintf("%s must be less than or equal to %s", field, param)
-	case "min":
-		return fmt.Sprintf("%s must be at least %s", field, param)
-	case "max":
-		return fmt.Sprintf("%s must be at most %s", field, param)
 	case "email":
 		return fmt.Sprintf("%s must be a valid email address", field)
-	case "url":
-		return fmt.Sprintf("%s must be a valid URL", field)
-	case "oneof":
-		return fmt.Sprintf("%s must be one of: %s", field, param)
+	case "min":
+		return fmt.Sprintf("%s must be at least %s characters", field, param)
+	case "max":
+		return fmt.Sprintf("%s must be at most %s characters", field, param)
+	case "uuid4":
+		return fmt.Sprintf("%s must be a valid UUID", field)
 	default:
 		return fmt.Sprintf("%s failed validation: %s", field, tag)
 	}

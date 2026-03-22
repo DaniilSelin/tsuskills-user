@@ -4,34 +4,36 @@ import (
 	"errors"
 )
 
+// repository-level errors
 var (
-	//общие ошибки
 	ErrNotFound     = errors.New("not found")
 	ErrInvalidInput = errors.New("invalid input")
 	ErrConflict     = errors.New("conflict")
-	ErrUnauthorized = errors.New("unauthorized")
 	ErrInternal     = errors.New("internal server error")
+)
 
-	// ошибки пакета security
-	ErrGetHashPswd   = errors.New("error hashing password")
-	ErrGenerateToken = errors.New("failed to generate token")
-	ErrByScript      = errors.New("byscript error")
-
-	// ошибки на уровне БД (repository)
-	ErrDB = errors.New("DB error")
-
-	// ошибки слоя бизнесс логики (service)
+// auth / security errors
+var (
+	ErrUnauthorized       = errors.New("unauthorized")
 	ErrExpiredToken       = errors.New("token expired")
 	ErrInvalidToken       = errors.New("invalid token")
 	ErrInvalidCredentials = errors.New("invalid email or password")
+	ErrHashPassword       = errors.New("error hashing password")
+	ErrGenerateToken      = errors.New("failed to generate token")
+	ErrUserAlreadyExists  = errors.New("user with this email already exists")
 )
 
-// коды ошибок слоя бизнесс логики
+// service-layer error codes
 type ErrorCode string
 
 const (
 	CodeOK                 ErrorCode = ""
 	CodeInternal           ErrorCode = "INTERNAL_ERROR"
-	CodeInvalidLimit       ErrorCode = "INVALID_LIMIT"
+	CodeNotFound           ErrorCode = "NOT_FOUND"
+	CodeConflict           ErrorCode = "CONFLICT"
+	CodeUnauthorized       ErrorCode = "UNAUTHORIZED"
+	CodeInvalidCredentials ErrorCode = "INVALID_CREDENTIALS"
 	CodeInvalidRequestBody ErrorCode = "INVALID_REQUEST_BODY"
+	CodeInvalidLimit       ErrorCode = "INVALID_LIMIT"
+	CodeForbidden          ErrorCode = "FORBIDDEN"
 )

@@ -1,64 +1,43 @@
 version: "3.8"
 
 services:
-  opensearch:
-    image: opensearchproject/opensearch:2.14.0
-    container_name: opensearch
+  postgres-users:
+    image: postgres:16-alpine
+    container_name: postgres-users
     environment:
-      - discovery.type=single-node
-      - bootstrap.memory_lock=true
-      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
-      - "DISABLE_SECURITY_PLUGIN=true"
-    ulimits:
-      memlock:
-        soft: -1
-        hard: -1
+      POSTGRES_DB: tsuskills_users
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5433:5432"
     volumes:
-      - opensearch-data:/usr/share/opensearch/data
-    ports:
-      - "9200:9200"
-      - "9600:9600" # метрики
+      - pg-users-data:/var/lib/postgresql/data
     networks:
-      - opensearch-net
-
-  opensearch-dashboards:
-    image: opensearchproject/opensearch-dashboards:2.14.0
-    container_name: opensearch-dashboards
-    ports:
-      - "5601:5601"
-    environment:
-      - OPENSEARCH_HOSTS=http://opensearch:9200
-      - DISABLE_SECURITY_DASHBOARDS_PLUGIN=true
-    networks:
-      - opensearch-net
-    depends_on:
-      - opensearch
+      - tsuskills-net
     healthcheck:
-      test: ["executable", "arg"]
-      interval: 1m30s
-      timeout: 15s
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
       retries: 5
-      start_period: 30s
-  dbmanager:
-    image: daniilselin/tsu-skills-dbmanager:latest
-    container_name: dbmanager
+
+  users-service:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: users-service
     environment:
-      - APP_SERVER_PORT=${APP_SERVER_PORT}
-      - CONFIG_FILE_PATH=${CONTAINER_CONFIG_FILE_PATH}
-      - APP_MIGRATE_OPENSEARCH_PATH=${CONTAINER_MIGRATIONS_PATH}
-      - APP_MIGRATE_OPENSEARCH_STATEFILEPATH=${CONTAINER_STATEFILE_PATH}
+      CONFIG_FILE_PATH: config/config.docker.yaml
     ports:
-      - "${APP_SERVER_PORT}:${APP_SERVER_PORT}"
-    volumes:
-      - "${HOST_CONFIG_FILE_PATH}:${CONTAINER_CONFIG_FILE_PATH}:ro"
-      - "${HOST_MIGRATIONS_PATH}:${CONTAINER_MIGRATIONS_PATH}:ro"
-      - "${HOST_STATEFILE_PATH}:${CONTAINER_STATEFILE_PATH}:ro"
+      - "8081:8081"
     depends_on:
-      - opensearch
+      postgres-users:
+        condition: service_healthy
     networks:
-      - opensearch-net
+      - tsuskills-net
+
 volumes:
-  opensearch-data:
+  pg-users-data:
 
 networks:
-  opensearch-net:
+  tsuskills-net:
+    driver: bridge

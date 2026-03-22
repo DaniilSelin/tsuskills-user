@@ -1,12 +1,12 @@
 package service
 
 import (
+	"context"
+	"errors"
 	"time"
-	"tsuskills-user/config"
+
 	"tsuskills-user/internal/domain"
 	"tsuskills-user/internal/logger"
-
-	"context"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -16,181 +16,204 @@ type UserService struct {
 	repo IUserRepository
 	sec  ISecurity
 	log  logger.Logger
-	cfg  *config.Config
 }
 
-func NewUserService(repo IUserRepository, security ISecurity, log logger.Logger, cfg *config.Config) *UserService {
-	return &UserService{
-		repo: repo,
-		sec:  security,
-		log:  log,
-		cfg:  cfg,
-	}
+func NewUserService(repo IUserRepository, sec ISecurity, log logger.Logger) *UserService {
+	return &UserService{repo: repo, sec: sec, log: log}
 }
 
-// Логирование + дока
-
-// Register - получает уже валидированные данные с верхнего уровня.
-// Возвращает
-func (s *UserService) Register(ctx context.Context, registry domain.RegistrationRequest) (uuid.UUID, string, domain.ErrorCode) {
-	s.log.Info(
-		ctx,
-		"Register: invoke",
-	)
-
-	hashedPswd, err := s.sec.GetHashPswd(registry.Pswd)
+// Register создаёт нового пользователя, хеширует пароль, сохраняет в БД,
+// возвращает access и refresh токены.
+func (s *UserService) Register(
+	ctx context.Context,
+	req domain.RegistrationRequest,
+) (uuid.UUID, string, string, domain.ErrorCode) {
+	exists, err := s.repo.EmailExists(ctx, req.Email)
 	if err != nil {
-		s.log.Error(
-			ctx,
-			"Register: error hashing password",
-			zap.Error(err),
-		)
-		return uuid.Nil, "", domain.CodeInternal
+		s.log.Error(ctx, "Register: check email exists", zap.Error(err))
+		return uuid.Nil, "", "", domain.CodeInternal
+	}
+	if exists {
+		s.log.Warn(ctx, "Register: email already taken", zap.String("email", req.Email))
+		return uuid.Nil, "", "", domain.CodeConflict
 	}
 
-	var user = domain.User{
-		ID:         uuid.New(),
-		Name:       registry.Name,
-		HashPswd:   hashedPswd,
-		Status:     domain.Active,
-		IsVerified: false,
-		CreatedAt:  time.Now(),
+	hashedPswd, err := s.sec.HashPassword(req.Password)
+	if err != nil {
+		s.log.Error(ctx, "Register: hash password", zap.Error(err))
+		return uuid.Nil, "", "", domain.CodeInternal
 	}
 
-	var email = domain.Email{
+	now := time.Now()
+	user := domain.User{
+		ID:           uuid.New(),
+		Name:         req.Name,
+		PasswordHash: hashedPswd,
+		Status:       domain.StatusActive,
+		IsVerified:   false,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+
+	email := domain.Email{
 		UserID:     user.ID,
-		Addr:       registry.Email,
+		Addr:       req.Email,
 		IsPrimary:  true,
 		IsVerified: false,
 	}
 
-	tx, err := s.repo.BeginTX(ctx)
-
-	userID, err := s.repo.CreateUserAndEmail(ctx, tx, user, email)
+	userID, err := s.repo.CreateUserAndEmail(ctx, user, email)
 	if err != nil {
-		s.log.Error(
-			ctx,
-			"Register: error creating user or email",
-			zap.Error(err),
-		)
-		return uuid.Nil, "", domain.CodeInternal
+		s.log.Error(ctx, "Register: create user", zap.Error(err))
+		return uuid.Nil, "", "", domain.CodeInternal
 	}
 
-	token, err := s.sec.GenerateToken(userID)
+	accessToken, err := s.sec.GenerateAccessToken(userID)
 	if err != nil {
-		s.log.Error(
-			ctx,
-			"Register: error generating token",
-			zap.Error(err),
-		)
-		return uuid.Nil, "", domain.CodeInternal
+		s.log.Error(ctx, "Register: generate access token", zap.Error(err))
+		return uuid.Nil, "", "", domain.CodeInternal
 	}
 
-	return userID, token, domain.CodeOK
+	refreshToken, err := s.sec.GenerateRefreshToken(userID)
+	if err != nil {
+		s.log.Error(ctx, "Register: generate refresh token", zap.Error(err))
+		return uuid.Nil, "", "", domain.CodeInternal
+	}
+
+	s.log.Info(ctx, "Register: success", zap.String("user_id", userID.String()))
+	return userID, accessToken, refreshToken, domain.CodeOK
 }
 
-// Доделать
+// Login проверяет email+пароль, возвращает access и refresh токены.
+func (s *UserService) Login(
+	ctx context.Context,
+	req domain.LoginRequest,
+) (string, string, domain.ErrorCode) {
+	user, err := s.repo.GetUserByEmail(ctx, req.Email)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			s.log.Warn(ctx, "Login: user not found", zap.String("email", req.Email))
+			return "", "", domain.CodeInvalidCredentials
+		}
+		s.log.Error(ctx, "Login: get user by email", zap.Error(err))
+		return "", "", domain.CodeInternal
+	}
 
+	if err := s.sec.CompareHashAndPassword(user.PasswordHash, req.Password); err != nil {
+		s.log.Warn(ctx, "Login: wrong password", zap.String("email", req.Email))
+		return "", "", domain.CodeInvalidCredentials
+	}
+
+	accessToken, err := s.sec.GenerateAccessToken(user.ID)
+	if err != nil {
+		s.log.Error(ctx, "Login: generate access token", zap.Error(err))
+		return "", "", domain.CodeInternal
+	}
+
+	refreshToken, err := s.sec.GenerateRefreshToken(user.ID)
+	if err != nil {
+		s.log.Error(ctx, "Login: generate refresh token", zap.Error(err))
+		return "", "", domain.CodeInternal
+	}
+
+	s.log.Info(ctx, "Login: success", zap.String("user_id", user.ID.String()))
+	return accessToken, refreshToken, domain.CodeOK
+}
+
+// Auth валидирует access token и возвращает user ID.
+func (s *UserService) Auth(ctx context.Context, token string) (uuid.UUID, domain.ErrorCode) {
+	claims, err := s.sec.ValidateToken(token)
+	if err != nil {
+		if errors.Is(err, domain.ErrExpiredToken) {
+			return uuid.Nil, domain.CodeUnauthorized
+		}
+		return uuid.Nil, domain.CodeUnauthorized
+	}
+
+	userID, err := uuid.Parse(claims.UserID)
+	if err != nil {
+		return uuid.Nil, domain.CodeUnauthorized
+	}
+
+	// проверяем что пользователь ещё существует
+	_, _, repoErr := s.repo.GetUserByID(ctx, userID)
+	if repoErr != nil {
+		if errors.Is(repoErr, domain.ErrNotFound) {
+			return uuid.Nil, domain.CodeNotFound
+		}
+		return uuid.Nil, domain.CodeInternal
+	}
+
+	return userID, domain.CodeOK
+}
+
+// RefreshToken обновляет access token по refresh token.
+func (s *UserService) RefreshToken(ctx context.Context, refreshToken string) (string, domain.ErrorCode) {
+	newAccess, claims, err := s.sec.RefreshAccessToken(refreshToken)
+	if err != nil {
+		if errors.Is(err, domain.ErrExpiredToken) {
+			return "", domain.CodeUnauthorized
+		}
+		return "", domain.CodeUnauthorized
+	}
+
+	// проверяем что пользователь ещё существует
+	userID, parseErr := uuid.Parse(claims.UserID)
+	if parseErr != nil {
+		return "", domain.CodeUnauthorized
+	}
+	_, _, repoErr := s.repo.GetUserByID(ctx, userID)
+	if repoErr != nil {
+		return "", domain.CodeUnauthorized
+	}
+
+	s.log.Info(ctx, "RefreshToken: success", zap.String("user_id", claims.UserID))
+	return newAccess, domain.CodeOK
+}
+
+// GetUser возвращает пользователя по ID.
 func (s *UserService) GetUser(ctx context.Context, id uuid.UUID) (*domain.User, *domain.Email, domain.ErrorCode) {
-	s.log.Info(
-		ctx,
-		"GetUser: invoke",
-	)
-
-	u, e, err := s.repo.GetUser(ctx, id)
-	if err != domain.CodeOK {
-		s.log.Error(
-			ctx,
-			"GetUser: invoke",
-		)
+	user, email, err := s.repo.GetUserByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return nil, nil, domain.CodeNotFound
+		}
+		s.log.Error(ctx, "GetUser: repo error", zap.Error(err))
+		return nil, nil, domain.CodeInternal
 	}
-
-	return u, e, err
+	return user, email, domain.CodeOK
 }
 
-func (s *UserService) UpdateUser(ctx context.Context, user *domain.User) error {
-	if user.HashPswd != "" {
-		hashedPassword, err := s.sec.GetHashPswd(user.HashPswd)
+// UpdateUser обновляет имя пользователя. Если передан новый пароль — хеширует.
+func (s *UserService) UpdateUser(ctx context.Context, user *domain.User, newPassword string) domain.ErrorCode {
+	if newPassword != "" {
+		hashed, err := s.sec.HashPassword(newPassword)
 		if err != nil {
-			return errdefs.Wrapf(errdefs.ErrGetHashPswd, "error hashing password: %w", err)
+			s.log.Error(ctx, "UpdateUser: hash password", zap.Error(err))
+			return domain.CodeInternal
 		}
-		user.Password = hashedPassword
+		user.PasswordHash = hashed
 	}
-	return s.repo.UpdateUser(ctx, user)
+
+	if err := s.repo.UpdateUser(ctx, user); err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return domain.CodeNotFound
+		}
+		s.log.Error(ctx, "UpdateUser: repo error", zap.Error(err))
+		return domain.CodeInternal
+	}
+
+	return domain.CodeOK
 }
 
-func (s *UserService) DeleteUser(ctx context.Context, id int) error {
-	return s.repo.DeleteUser(ctx, id)
-}
-
-func (s *UserService) Login(ctx context.Context, email, pswd string) (string, error) {
-	passwordRef, userId, err := s.repo.GetUserByEmail(ctx, email)
-
-	if err != nil {
-		if errdefs.Is(err, errdefs.ErrNotFound) {
-			return "", errdefs.ErrNotFound
+// DeleteUser выполняет мягкое удаление пользователя.
+func (s *UserService) DeleteUser(ctx context.Context, id uuid.UUID) domain.ErrorCode {
+	if err := s.repo.SoftDeleteUser(ctx, id); err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return domain.CodeNotFound
 		}
-		return "", errdefs.ErrDB
+		s.log.Error(ctx, "DeleteUser: repo error", zap.Error(err))
+		return domain.CodeInternal
 	}
-
-	err = s.security.CompareHashAndPassword(passwordRef, pswd)
-	if err != nil {
-		return "", errdefs.ErrInvalidCredentials
-	}
-
-	token, err := s.security.GenerateToken(userId)
-	if err != nil {
-		// Сменить ошибку
-		return "", errdefs.ErrGenerateToken
-	}
-
-	return token, nil
-}
-
-func (s *UserService) Auth(ctx context.Context, token string) (int, error) {
-	claims, err := s.security.ValidateToken(token)
-	if err != nil {
-		if errdefs.Is(err, errdefs.ErrExpiredToken) {
-			return -1, errdefs.ErrExpiredToken
-		}
-		if errdefs.Is(err, errdefs.ErrInvalidToken) {
-			return -1, errdefs.ErrInvalidToken
-		}
-		return -1, errdefs.Wrapf(errdefs.ErrByScript, "token validation error: %w", err)
-	}
-
-	userID := claims.UserID
-
-	_, err = s.repo.GetUser(ctx, userID)
-	if err != nil {
-		if errdefs.Is(err, errdefs.ErrNotFound) {
-			return -1, errdefs.ErrNotFound
-		}
-		return -1, errdefs.ErrDB
-	}
-
-	return userID, nil
-}
-
-func (s *UserService) RefreshToken(ctx context.Context, token string) (string, error) {
-	claims, err := s.security.ValidateToken(token)
-	if err != nil && !errdefs.Is(err, errdefs.ErrExpiredToken) {
-		return "", errdefs.ErrInvalidToken
-	}
-
-	userID := claims.UserID
-	_, err = s.repo.GetUser(ctx, userID)
-	if err != nil {
-		if errdefs.Is(err, errdefs.ErrNotFound) {
-			return "", errdefs.ErrNotFound
-		}
-		return "", errdefs.ErrDB
-	}
-
-	newToken, err := s.security.RefreshToken(token)
-	if err != nil {
-		return "", errdefs.Wrapf(errdefs.ErrByScript, "failed to refresh token: %w", err)
-	}
-
-	return newToken, nil
+	return domain.CodeOK
 }

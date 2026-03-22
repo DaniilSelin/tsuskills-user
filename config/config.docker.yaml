@@ -1,21 +1,31 @@
-opensearch:
-  connect:
-    retries: 5
-    delay: 5s
-  client:
-    addresses:
-      - "http://opensearch:9200"
+postgres:
+  pool:
+    ConnConfig:
+      Host: "postgres-users"
+      Port: 5432
+      Database: "tsuskills_users"
+      User: "postgres"
+      Password: "postgres"
+      SSLMode: "disable"
+      ConnectTimeout: 5
+    MaxConns: 10
+    MinConns: 2
+    MaxConnLifetime: 30m
+    MaxConnIdleTime: 5m
+    HealthCheckPeriod: 30s
+  ConnectRetries: 5
+  ConnectRetryDelay: 3s
+  Schema: "users"
+  MigrationsPath: "internal/infra/postgres/migrations"
 
-migrate:
-  FailOnError: true
-  OpenSearch:
-    Path: "internal/infra/opensearch/documents/001_vacancy_v1"
-    StateFilePath: "internal/infra/opensearch/documents/.migrations.json"
-    FailOnError: true
+jwt:
+  secret_key: "change-me-in-production-min-32-chars!"
+  access_expiration: 15m
+  refresh_expiration: 168h
 
 server:
   host: 0.0.0.0
-  port: 11434
+  port: 8081
   ReadTimeout: 15s
   WriteTimeout: 15s
   IdleTimeout: 60s
@@ -23,8 +33,8 @@ server:
 
 logger:
   logger:
-    Level: "debug"
-    Development: true
+    Level: "info"
+    Development: false
     Encoding: "json"
     OutputPaths: ["stdout"]
     ErrorOutputPaths: ["stderr"]

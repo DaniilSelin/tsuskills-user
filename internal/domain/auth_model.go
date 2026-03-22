@@ -5,32 +5,18 @@ import (
 )
 
 type LoginRequest struct {
-	Email string
-	Pswd  string
-}
-
-type LoginResponse struct {
-	Token string
-}
-
-type AuthResponse struct {
-	UserID int
+	Email    string
+	Password string
 }
 
 type RegistrationRequest struct {
-	Name  string
-	Email string
-	Pswd  string
-	Role  string
-}
-
-type RegistrationResponse struct {
-	UserID int
-	Token  string
+	Name     string
+	Email    string
+	Password string
 }
 
 type Claims struct {
-	UserID  int
-	TokenID string
+	UserID  string `json:"user_id"`
+	TokenID string `json:"token_id"`
 	jwt.RegisteredClaims
 }

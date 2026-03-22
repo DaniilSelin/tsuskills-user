@@ -5,65 +5,61 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 
-	"tsuskills-dbmanager/config"
-	router "tsuskills-dbmanager/internal/delivery/http"
-	"tsuskills-dbmanager/internal/delivery/http/handler"
-	"tsuskills-dbmanager/internal/infra/migrations"
-	"tsuskills-dbmanager/internal/infra/opensearch"
-	"tsuskills-dbmanager/internal/logger"
-	"tsuskills-dbmanager/internal/search"
-	"tsuskills-dbmanager/internal/service"
-
-	_ "github.com/davecgh/go-spew/spew"
+	"tsuskills-user/config"
+	router "tsuskills-user/internal/delivery/http"
+	"tsuskills-user/internal/delivery/http/handler"
+	"tsuskills-user/internal/infra/postgres"
+	"tsuskills-user/internal/logger"
+	"tsuskills-user/internal/repository"
+	"tsuskills-user/internal/security"
+	"tsuskills-user/internal/service"
 )
 
 func main() {
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Config
 	cfg, err := config.LoadConfig()
 	if err != nil {
-		log.Fatalf("FAILED: error when load config: %v", err)
+		log.Fatalf("Failed to load config: %v", err)
 	}
 
+	// Logger
 	appLogger, err := logger.New(&cfg.Logger.Logger)
 	if err != nil {
 		log.Fatalf("Failed to create logger: %v", err)
 	}
 
-	appLogger.Info(ctx, "Starting application...")
+	appLogger.Info(ctx, "Starting users service...")
 
-	osclient, err := opensearch.NewClient(cfg.Search.Client)
+	// Postgres
+	pool, err := postgres.Connect(ctx, &cfg.Postgres)
 	if err != nil {
-		log.Fatalf("FAILED: error when connect to opensearch: %v", err)
+		appLogger.Fatal(ctx, fmt.Sprintf("Failed to connect to Postgres: %v", err))
 	}
+	defer pool.Close()
+	appLogger.Info(ctx, "Connected to PostgreSQL")
 
-	err = opensearch.Ping(osclient, cfg.Search.Connect)
-	if err != nil {
-		log.Fatalf("FAILED: error when ping opensearch: %v", err)
+	// Migrations
+	connString := cfg.Postgres.Pool.ConnConfig.ConnString()
+	if err := postgres.RunMigrations(connString, cfg.Postgres.MigrationsPath); err != nil {
+		appLogger.Fatal(ctx, fmt.Sprintf("Failed to run migrations: %v", err))
 	}
+	appLogger.Info(ctx, "Database migrations applied")
 
-	migratorOS := opensearch.NewMigrate(cfg.Migrate)
-	migratorOS.WithClient(osclient)
+	// Dependencies
+	userRepo := repository.NewUserRepository(pool)
+	sec := security.NewSecurity(&cfg.JWT)
+	userService := service.NewUserService(userRepo, sec, appLogger)
+	h := handler.NewHandler(userService, appLogger)
+	r := router.NewRouter(h, appLogger)
 
-	logFunc := func(level string, msg string) {
-		switch level {
-		case "INFO":
-			log.Println(msg)
-		default:
-			log.Println(msg)
-		}
-	}
-	err = migrations.RunMigrations(ctx, logFunc, cfg.Migrate, &migratorOS)
-	if err != nil {
-		log.Fatal("Error when migrate: %w", err)
-	}
-
-	log.Println("OpenSearch client connected and migrations applied successfully.")
-
-	searchVC := search.NewVacancySearch(cfg, osclient, appLogger)
-	service := service.NewVacancyService(cfg, searchVC, appLogger)
-	handler := handler.NewHandler(service, appLogger)
-	r := router.NewRouter(handler, appLogger)
+	// HTTP Server
 	httpServer := &http.Server{
 		Addr:         fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port),
 		Handler:      r,
@@ -72,9 +68,26 @@ func main() {
 		IdleTimeout:  cfg.Server.IdleTimeout,
 	}
 
-	// Запускаем сервер
+	// Graceful shutdown
+	go func() {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		sig := <-sigCh
+		appLogger.Info(ctx, fmt.Sprintf("Received signal: %v, shutting down...", sig))
+
+		shutCtx, shutCancel := context.WithTimeout(context.Background(), cfg.Server.ShutDownTimeOut)
+		defer shutCancel()
+
+		if err := httpServer.Shutdown(shutCtx); err != nil {
+			appLogger.Error(ctx, fmt.Sprintf("Server shutdown error: %v", err))
+		}
+		cancel()
+	}()
+
 	appLogger.Info(ctx, fmt.Sprintf("Server starting on %s:%d", cfg.Server.Host, cfg.Server.Port))
 	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		appLogger.Fatal(ctx, fmt.Sprintf("Server failed to start: %v", err))
+		appLogger.Fatal(ctx, fmt.Sprintf("Server failed: %v", err))
 	}
+
+	appLogger.Info(ctx, "Server stopped")
 }

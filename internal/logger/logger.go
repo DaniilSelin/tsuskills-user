@@ -18,19 +18,17 @@ type Logger struct {
 }
 
 func New(cfgLog *zap.Config) (Logger, error) {
-	// Добавляем энкодер времени и уровня вручную, т.к это функции
 	cfgLog.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
 	cfgLog.EncoderConfig.EncodeLevel = zapcore.LowercaseLevelEncoder
 
 	logger, err := cfgLog.Build()
 	if err != nil {
-		return Logger{}, fmt.Errorf("FATAL: failed to create logger: %w", err)
+		return Logger{}, fmt.Errorf("failed to create logger: %w", err)
 	}
 
 	return Logger{l: logger}, nil
 }
 
-// addRequestID достает из контекста RequestID и добавляет его в поля
 func (l *Logger) addRequestID(ctx context.Context, fields []zap.Field) []zap.Field {
 	if ctx.Value(RequestID) != nil {
 		fields = append(fields, zap.String(RequestID, ctx.Value(RequestID).(string)))
@@ -52,14 +50,6 @@ func (l *Logger) Warn(ctx context.Context, msg string, fields ...zap.Field) {
 
 func (l *Logger) Error(ctx context.Context, msg string, fields ...zap.Field) {
 	l.l.Error(msg, l.addRequestID(ctx, fields)...)
-}
-
-func (l *Logger) DPanic(ctx context.Context, msg string, fields ...zap.Field) {
-	l.l.DPanic(msg, l.addRequestID(ctx, fields)...)
-}
-
-func (l *Logger) Panic(ctx context.Context, msg string, fields ...zap.Field) {
-	l.l.Panic(msg, l.addRequestID(ctx, fields)...)
 }
 
 func (l *Logger) Fatal(ctx context.Context, msg string, fields ...zap.Field) {
