@@ -1,0 +1,44 @@
+postgres:
+  pool:
+    ConnConfig:
+      Host: "localhost"
+      Port: 5432
+      Database: "tsuskills_users"
+      User: "postgres"
+      Password: "postgres"
+      SSLMode: "disable"
+      ConnectTimeout: 5
+    MaxConns: 10
+    MinConns: 2
+    MaxConnLifetime: 30m
+    MaxConnIdleTime: 5m
+    HealthCheckPeriod: 30s
+  ConnectRetries: 3
+  ConnectRetryDelay: 2s
+  Schema: "users"
+  MigrationsPath: "internal/infra/postgres/migrations"
+
+jwt:
+  secret_key: "change-me-in-production-min-32-chars!"
+  access_expiration: 15m
+  refresh_expiration: 168h
+
+server:
+  host: 0.0.0.0
+  port: 8081
+  ReadTimeout: 15s
+  WriteTimeout: 15s
+  IdleTimeout: 60s
+  ShutDownTimeOut: 30s
+
+logger:
+  logger:
+    Level: "debug"
+    Development: true
+    Encoding: "json"
+    OutputPaths: ["stdout"]
+    ErrorOutputPaths: ["stderr"]
+    EncoderConfig:
+      MessageKey: "message"
+      LevelKey: "level"
+      TimeKey: "timestamp"

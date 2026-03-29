@@ -1,0 +1,43 @@
+version: "3.8"
+
+services:
+  postgres-users:
+    image: postgres:16-alpine
+    container_name: postgres-users
+    environment:
+      POSTGRES_DB: tsuskills_users
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5433:5432"
+    volumes:
+      - pg-users-data:/var/lib/postgresql/data
+    networks:
+      - tsuskills-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  users-service:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: users-service
+    environment:
+      CONFIG_FILE_PATH: config/config.docker.yaml
+    ports:
+      - "8081:8081"
+    depends_on:
+      postgres-users:
+        condition: service_healthy
+    networks:
+      - tsuskills-net
+
+volumes:
+  pg-users-data:
+
+networks:
+  tsuskills-net:
+    driver: bridge

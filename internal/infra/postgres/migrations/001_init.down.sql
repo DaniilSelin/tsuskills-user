@@ -1,0 +1,5 @@
+SET search_path TO users;
+
+DROP TABLE IF EXISTS emails;
+DROP TABLE IF EXISTS users;
+DROP SCHEMA IF EXISTS users;
