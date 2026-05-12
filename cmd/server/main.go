@@ -12,6 +12,7 @@ import (
 	"tsuskills-user/config"
 	router "tsuskills-user/internal/delivery/http"
 	"tsuskills-user/internal/delivery/http/handler"
+	"tsuskills-user/internal/infra/kafka"
 	"tsuskills-user/internal/infra/postgres"
 	"tsuskills-user/internal/logger"
 	"tsuskills-user/internal/repository"
@@ -52,10 +53,27 @@ func main() {
 	}
 	appLogger.Info(ctx, "Database migrations applied")
 
+	// Kafka publisher
+	publisher, err := kafka.NewPublisher(kafka.Config{
+		Brokers:      cfg.Kafka.Brokers,
+		Topic:        cfg.Kafka.Topic,
+		ClientID:     cfg.Kafka.ClientID,
+		DialTimeout:  cfg.Kafka.DialTimeout,
+		WriteTimeout: cfg.Kafka.WriteTimeout,
+	})
+	if err != nil {
+		appLogger.Fatal(ctx, fmt.Sprintf("Failed to create Kafka publisher: %v", err))
+	}
+	defer func() {
+		if err := publisher.Close(); err != nil {
+			appLogger.Error(ctx, fmt.Sprintf("Failed to close Kafka publisher: %v", err))
+		}
+	}()
+
 	// Dependencies
 	userRepo := repository.NewUserRepository(pool)
 	sec := security.NewSecurity(&cfg.JWT)
-	userService := service.NewUserService(userRepo, sec, appLogger)
+	userService := service.NewUserService(userRepo, sec, publisher, appLogger)
 	h := handler.NewHandler(userService, appLogger)
 	r := router.NewRouter(h, appLogger)
 

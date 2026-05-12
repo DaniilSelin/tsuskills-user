@@ -42,3 +42,11 @@ logger:
       MessageKey: "message"
       LevelKey: "level"
       TimeKey: "timestamp"
+
+kafka:
+  Brokers:
+    - "kafka:9092"
+  Topic: "tsu.events"
+  ClientID: "users-service"
+  DialTimeout: 10s
+  WriteTimeout: 1s

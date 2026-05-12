@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"tsuskills-user/internal/domain"
+	"tsuskills-user/internal/infra/kafka"
 	"tsuskills-user/internal/logger"
 
 	"github.com/google/uuid"
@@ -13,13 +14,14 @@ import (
 )
 
 type UserService struct {
-	repo IUserRepository
-	sec  ISecurity
-	log  logger.Logger
+	repo      IUserRepository
+	sec       ISecurity
+	publisher kafka.Publisher
+	log       logger.Logger
 }
 
-func NewUserService(repo IUserRepository, sec ISecurity, log logger.Logger) *UserService {
-	return &UserService{repo: repo, sec: sec, log: log}
+func NewUserService(repo IUserRepository, sec ISecurity, publisher kafka.Publisher, log logger.Logger) *UserService {
+	return &UserService{repo: repo, sec: sec, publisher: publisher, log: log}
 }
 
 // Register создаёт нового пользователя, хеширует пароль, сохраняет в БД,
@@ -66,6 +68,14 @@ func (s *UserService) Register(
 	if err != nil {
 		s.log.Error(ctx, "Register: create user", zap.Error(err))
 		return uuid.Nil, "", "", domain.CodeInternal
+	}
+
+	if err := s.publishUserEvent(ctx, kafka.EventUserCreated, userID.String(), map[string]interface{}{
+		"name":        user.Name,
+		"status":      user.Status,
+		"is_verified": user.IsVerified,
+	}); err != nil {
+		s.log.Warn(ctx, "Register: publish user created event failed", zap.Error(err))
 	}
 
 	accessToken, err := s.sec.GenerateAccessToken(userID)
@@ -203,6 +213,14 @@ func (s *UserService) UpdateUser(ctx context.Context, user *domain.User, newPass
 		return domain.CodeInternal
 	}
 
+	if err := s.publishUserEvent(ctx, kafka.EventUserUpdated, user.ID.String(), map[string]interface{}{
+		"name":        user.Name,
+		"status":      user.Status,
+		"is_verified": user.IsVerified,
+	}); err != nil {
+		s.log.Warn(ctx, "UpdateUser: publish user updated event failed", zap.Error(err))
+	}
+
 	return domain.CodeOK
 }
 
@@ -215,5 +233,18 @@ func (s *UserService) DeleteUser(ctx context.Context, id uuid.UUID) domain.Error
 		s.log.Error(ctx, "DeleteUser: repo error", zap.Error(err))
 		return domain.CodeInternal
 	}
+
+	if err := s.publishUserEvent(ctx, kafka.EventUserDeleted, id.String(), nil); err != nil {
+		s.log.Warn(ctx, "DeleteUser: publish user deleted event failed", zap.Error(err))
+	}
+
 	return domain.CodeOK
+}
+
+func (s *UserService) publishUserEvent(ctx context.Context, eventType, entityID string, payload map[string]interface{}) error {
+	event, err := kafka.NewEvent(eventType, kafka.EntityUser, entityID, payload)
+	if err != nil {
+		return err
+	}
+	return s.publisher.Publish(ctx, event)
 }
